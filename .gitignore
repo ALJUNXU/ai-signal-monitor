@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 打包产物(本地用,不入库)
+build/
+dist/
+*.spec
+
+# 日志/截图
+*.log
+shot_*.png
+
+# IDE
+.idea/
+.vscode/
