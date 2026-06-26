@@ -9,6 +9,8 @@
 >
 > 其它版本(CLI 版 Claude、手机端 Hermes 等)未适配,灯可能不亮。
 
+📖 **English**: [README_EN.md](./README_EN.md)
+
 ## 状态
 
 | 灯 | 含义 |

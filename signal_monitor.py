@@ -6,6 +6,7 @@
 贴屏幕右边缘吸附隐藏(只露灯),鼠标 hover 展开(灯+标签)。
 """
 import os
+import json
 import sys
 import time
 import sqlite3
@@ -21,7 +22,22 @@ LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or str(Path.home())
 STATE_DIR = Path(LOCALAPPDATA) / "AiSignal"
 STATE_FILES = {"claude": STATE_DIR / "claude.txt", "hermes": STATE_DIR / "hermes.txt"}
 HERMES_DB = Path(LOCALAPPDATA) / "hermes" / "state.db"
+CONFIG_FILE = STATE_DIR / "config.json"
 CREATE_NO_WINDOW = 0x08000000
+
+
+def _load_config():
+    try:
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_config(d):
+    try:
+        CONFIG_FILE.write_text(json.dumps(d), encoding="utf-8")
+    except Exception:
+        pass
 
 
 # ---------- Hermes ----------
@@ -59,6 +75,14 @@ def _state_from_db():
 STATE_RGB = {"green": (86, 230, 140), "red": (255, 95, 95), "off": (115, 124, 144)}
 AGENT_DEFS = [("claude", "Claude"), ("hermes", "Hermes")]   # Claude 第一个(上)
 
+# 右键菜单文案(中/英)
+I18N = {
+    "zh": {"opacity": "透明度", "clear": "清晰", "high": "高", "medium": "中", "low": "低",
+           "timeout": "绿灯超时转红", "off": "关闭", "min": "分钟", "language": "语言", "exit": "退出"},
+    "en": {"opacity": "Opacity", "clear": "Clear", "high": "High", "medium": "Medium", "low": "Low",
+           "timeout": "Green timeout → Red", "off": "Off", "min": "min", "language": "Language", "exit": "Exit"},
+}
+
 
 class Monitor(QWidget):
     W_HIDDEN = 40      # 隐藏态露出宽度(灯区)
@@ -73,6 +97,9 @@ class Monitor(QWidget):
         self.states = {k: "off" for k, _ in AGENT_DEFS}
         self._drag = None
         self._docked = True
+        _cfg = _load_config()
+        self._green_timeout_min = int(_cfg.get("green_timeout_min", 5))
+        self._lang = _cfg.get("lang", "zh")
         self.show()
         g = self._screen_right()
         self.move(g - self.W_HIDDEN, 12)   # 初始:右上角贴边隐藏(露灯)
@@ -121,6 +148,7 @@ class Monitor(QWidget):
     def _hermes_loop(self):
         last_proc = 0.0
         running = False
+        last_written = None
         while True:
             try:
                 now = time.time()
@@ -128,19 +156,28 @@ class Monitor(QWidget):
                     running = _hermes_running()
                     last_proc = now
                 s = _state_from_db() if running else "off"
-                STATE_FILES["hermes"].write_text(s, encoding="utf-8")
+                if s != last_written:                # 只在状态变化时写(让 mtime = 进入该状态的时刻)
+                    STATE_FILES["hermes"].write_text(s, encoding="utf-8")
+                    last_written = s
             except Exception:
                 pass
             time.sleep(2)
 
     def refresh(self):
         changed = False
+        now = time.time()
+        timeout = self._green_timeout_min * 60 if self._green_timeout_min > 0 else 0
         for k, _ in AGENT_DEFS:
+            p = STATE_FILES[k]
             try:
-                v = STATE_FILES[k].read_text(encoding="utf-8").strip().lower()
+                v = p.read_text(encoding="utf-8").strip().lower()
+                mt = p.stat().st_mtime
             except Exception:
-                v = "off"
+                v, mt = "off", now
             v = v if v in STATE_RGB else "off"
+            # 绿灯超时:文件是 green,但超过 N 分钟没更新 → 视为卡住,转红
+            if v == "green" and timeout > 0 and (now - mt) > timeout:
+                v = "red"
             if self.states[k] != v:
                 self.states[k] = v
                 changed = True
@@ -196,12 +233,33 @@ class Monitor(QWidget):
             self._docked = True
             self._dock_hide()
 
+    def _set_timeout(self, minutes):
+        self._green_timeout_min = minutes
+        cfg = _load_config(); cfg["green_timeout_min"] = int(minutes); _save_config(cfg)
+
+    def _set_lang(self, lang):
+        self._lang = lang
+        cfg = _load_config(); cfg["lang"] = lang; _save_config(cfg)
+
     def contextMenuEvent(self, e):
+        t = I18N.get(self._lang, I18N["zh"])
         m = QMenu(self)
-        for label, op in [("清晰", 1.0), ("高", 0.88), ("中", 0.72), ("低", 0.52)]:
-            m.addAction("透明度 · " + label, lambda op=op: self.setWindowOpacity(op))
+        for k, op in [("clear", 1.0), ("high", 0.88), ("medium", 0.72), ("low", 0.52)]:
+            m.addAction(t["opacity"] + " · " + t[k], lambda op=op: self.setWindowOpacity(op))
         m.addSeparator()
-        m.addAction("退出", self.close)
+        tm = m.addMenu(t["timeout"])
+        cur = self._green_timeout_min
+        for val in [0, 3, 5, 10, 20]:
+            label = t["off"] if val == 0 else f"{val} {t['min']}"
+            tm.addAction(("✓ " if val == cur else "    ") + label,
+                         lambda val=val: self._set_timeout(val))
+        m.addSeparator()
+        lm = m.addMenu(t["language"])
+        for label, val in [("中文", "zh"), ("English", "en")]:
+            lm.addAction(("✓ " if val == self._lang else "    ") + label,
+                         lambda val=val: self._set_lang(val))
+        m.addSeparator()
+        m.addAction(t["exit"], self.close)
         m.exec(e.globalPos())
 
 
