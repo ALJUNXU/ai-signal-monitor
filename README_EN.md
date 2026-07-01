@@ -1,13 +1,16 @@
-# AI Signal Monitor — Claude Code & Hermes Status Light
+# AI Signal Monitor — Claude Code / Codex / Hermes Status Light
 
-A Windows desktop floating signal light that monitors **Claude Code** and **Hermes Desktop** in real time. Glance and know: which AI is running, which is done, which is off. Two vertical dots (Claude on top, Hermes below); docks to the screen edge and hides; smoothly expands on hover.
+A Windows desktop floating signal light that monitors **Claude Code**, **Codex**, and **Hermes Desktop** in real time. Glance and know: which AI is running, which is done, which is off.
+
+**Dynamic lights**: only shows the Agents currently running (one light per running app; panel height grows with the count). **When multiple Claude windows are active, its light auto-splits** (2 windows → halves, 3 → thirds at 120°… each slice colored by that window's status). Docks to the right edge and hides; smoothly expands on hover.
 
 > 📌 **Supported versions**
-> - **Claude Code**: the **official VSCode extension** (from the VSCode marketplace — *not* the terminal `claude` CLI)
-> - **Hermes**: **Hermes Desktop** (by Nous Research, [download](https://hermes-ai.net/zh/desktop/))
+> - **Claude Code**: the **official VSCode extension** (from the marketplace — *not* the terminal `claude` CLI)
+> - **Codex**: the **Codex desktop client** (Windows, the one with a GUI)
+> - **Hermes**: **Hermes Desktop** (Nous Research, [download](https://hermes-ai.net/zh/desktop/))
 > - **OS**: Windows 10 / 11
 >
-> Other versions (CLI Claude, mobile Hermes, etc.) are not supported.
+> Other versions (CLI Claude/Codex, mobile, etc.) are not supported.
 
 📖 **中文**: [README.md](./README.md)
 
@@ -21,14 +24,18 @@ A Windows desktop floating signal light that monitors **Claude Code** and **Herm
 
 ## How it works
 
-**Claude Code** — uses official [hooks](https://code.claude.com/docs/en/hooks) to write status to `%LOCALAPPDATA%\AiSignal\claude.txt` on `UserPromptSubmit` / `Stop` / `SessionEnd` (values: `green` / `red` / `off`).
+| Agent | How status is detected |
+|---|---|
+| **Claude Code** | Official [hooks](https://code.claude.com/docs/en/hooks) via `claude_hook.py`, writing per-session `claude_<session>.txt`. Multiple Claude windows don't overwrite each other. |
+| **Codex** | Reads `~/.codex/state_5.sqlite` (read-only SQLite), checks the last `updated_at` of the `threads` table: updated within 30s → 🟢, else 🔴. |
+| **Hermes** | Reads `state.db` (read-only SQLite), checks the last message's `role` + `finish_reason`. |
 
-**Hermes** — reads Hermes's `state.db` (SQLite, read-only WAL, **won't lock Hermes**) and checks the last message's `role` + `finish_reason`:
-- `user` / `tool` / `assistant+tool_calls` → 🟢 running
-- `assistant+stop` → 🔴 done
-- Hermes not running → ⚫ gray
+> Codex/Hermes need **no configuration** — the app finds their sqlite automatically. Why not the HTTP API? It's auth-locked locally (anonymous → 401); reading the sqlite directly is the only accurate, real-time path.
 
-> Why not the HTTP API? The session-state endpoints (`/api/sessions`, `/api/ws`) are auth-locked (anonymous → 401 even locally), and `active_sessions` has a multi-minute keepalive delay. Reading the `state.db` Hermes writes itself is the only accurate, real-time path.
+## Dynamic lights + splitting
+
+- **Dynamic**: only shows Agents that are running (no Claude light if Claude isn't running); panel height adjusts to the number of lights.
+- **Claude splitting**: when multiple Claude windows are active within the last hour, its light auto-splits (2 windows → halves, 3 → thirds at 120°…), each slice colored by that window's status (green/red). Only active windows (green/red) count; closed ones (off) don't.
 
 ## Usage
 
@@ -41,37 +48,41 @@ Or run the prebuilt `AiSignal.exe` (from [Releases](../../releases), no Python n
 
 ### Configure Claude Code hooks
 
-Merge this into the `hooks` field of `~/.claude/settings.json` (Windows: `C:\Users\<you>\.claude\settings.json`):
+**Codex / Hermes need no config.** Only Claude Code does (it has no readable state file, so we use hooks):
+
+Merge this into the `hooks` field of `~/.claude/settings.json` (Windows: `C:\Users\<you>\.claude\settings.json`). **Replace `<project-path>` with your actual clone path** (e.g. `D:/code/ai-signal`):
 
 ```json
 {
   "hooks": {
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command",
-      "command": "mkdir -p \"$HOME/AppData/Local/AiSignal\" && echo green > \"$HOME/AppData/Local/AiSignal/claude.txt\"" }] }],
-    "Stop": [{ "hooks": [{ "type": "command",
-      "command": "mkdir -p \"$HOME/AppData/Local/AiSignal\" && echo red > \"$HOME/AppData/Local/AiSignal/claude.txt\"" }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command",
-      "command": "mkdir -p \"$HOME/AppData/Local/AiSignal\" && echo off > \"$HOME/AppData/Local/AiSignal/claude.txt\"" }] }]
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "python \"<project-path>/claude_hook.py\"" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "python \"<project-path>/claude_hook.py\"" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "python \"<project-path>/claude_hook.py\"" }] }]
   }
 }
 ```
 
-Hermes needs **no configuration** — the app finds its `state.db` automatically.
-
-## Interaction
+## Interaction / Settings (right-click)
 
 - 🖱️ Drag to move
-- 🧲 Drag to the **right edge** → dock & hide (only the two lights show)
-- 👆 Hover → smooth expand (200ms eased)
-- 🖱️ Right-click → **opacity / green-timeout / language / exit**
+- 🧲 Drag to the **right edge** → dock & hide (only lights show)
+- 👆 Hover → smooth expand (animated)
+- 🖱️ Right-click menu:
+  - **Opacity** (Clear / High / Medium / Low)
+  - **Green timeout → Red** (Off / 3 / 5 / 10 / 20 min: green turns red if no completion within this time)
+  - **Refresh rate** (1 / 5 / 10 / 30 / 60 s)
+  - **Language** (中文 / English)
+  - Exit
+
+Settings persist in `%LOCALAPPDATA%\AiSignal\config.json`.
 
 ## Tech
 
-Python + PySide6 (Qt6) + QPainter. Frameless translucent window + rounded panel + antialiased solid dots + `QPropertyAnimation` slide.
+Python + PySide6 (Qt6) + QPainter. Frameless translucent rounded panel + antialiased dots + pie splitting + animation (`QPropertyAnimation` + `QVariantAnimation`).
 
 ## Known limitations
 
-🟡 **Yellow (permission prompt) is unavailable in the VSCode extension** — VSCode's permission UI is native and **doesn't go through** Claude Code's `Notification` hook (only the terminal CLI does). So this tool has only green/red/gray. See [Claude Code hooks docs](https://code.claude.com/docs/en/hooks).
+🟡 **Yellow (permission prompt) is unavailable in the VSCode extension** — VSCode's permission UI is native and doesn't go through Claude Code's `Notification` hook. So only green/red/gray.
 
 ## Build the exe
 
