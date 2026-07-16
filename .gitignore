@@ -12,6 +12,20 @@ dist/
 *.log
 shot_*.png
 
+# 本地隐私与凭据
+.env
+.env.*
+!.env.example
+*.jsonl
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.key
+*.pfx
+settings.local.json
+config.local.json
+
 # IDE
 .idea/
 .vscode/

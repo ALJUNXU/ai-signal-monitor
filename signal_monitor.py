@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""AI 信号灯监控 v6(竖排 + 无光晕 + 圆角 + 贴边吸附隐藏)
+"""AI 信号灯监控(竖排 + 无光晕 + 圆角 + 贴边吸附隐藏)
 
-竖排两个实色圆点:Claude(上)、Hermes(下)。绿=运行中 红=完成 灰=离线。
+竖排显示 CC、ChatGPT、Hermes。绿=运行中 红=完成 灰=离线。
 贴屏幕右边缘吸附隐藏(只露灯),鼠标 hover 展开(灯+标签)。
 """
 import os
@@ -11,9 +11,10 @@ import math
 import sys
 import time
 import sqlite3
-import threading
 import subprocess
 from pathlib import Path
+
+from detectors import read_cc_sessions
 
 from PySide6.QtWidgets import QApplication, QWidget, QMenu
 from PySide6.QtCore import Qt, QTimer, QRectF, QPointF, QPoint, QPropertyAnimation, QEasingCurve, QVariantAnimation
@@ -21,7 +22,6 @@ from PySide6.QtGui import QPainter, QColor, QPen, QFont, QGuiApplication
 
 LOCALAPPDATA = os.environ.get("LOCALAPPDATA") or str(Path.home())
 STATE_DIR = Path(LOCALAPPDATA) / "AiSignal"
-STATE_FILES = {"claude": STATE_DIR / "claude.txt", "hermes": STATE_DIR / "hermes.txt"}
 HERMES_DB = Path(LOCALAPPDATA) / "hermes" / "state.db"
 CODEX_STATE = Path.home() / ".codex" / "state_5.sqlite"
 CONFIG_FILE = STATE_DIR / "config.json"
@@ -74,20 +74,8 @@ def _state_from_db():
     return "off"
 
 
-def _codex_running():
-    """Codex 桌面 app 是否在跑。"""
-    try:
-        out = subprocess.check_output(
-            ["powershell", "-NoProfile", "-Command",
-             "if(Get-Process Codex -ErrorAction SilentlyContinue){'1'}else{'0'}"],
-            text=True, timeout=3, creationflags=CREATE_NO_WINDOW)
-        return "1" in out
-    except Exception:
-        return False
-
-
-def _codex_state_from_db(now, active_sec=30):
-    """读 Codex state_5.sqlite:threads 最后 updated_at 近期=green,旧=red。"""
+def _chatgpt_state_from_db(now, active_sec=30):
+    """读 ChatGPT/Codex state_5.sqlite 的最后更新时间。"""
     if not CODEX_STATE.exists():
         return "off"
     db = str(CODEX_STATE).replace("\\", "/")
@@ -104,11 +92,15 @@ def _codex_state_from_db(now, active_sec=30):
 
 
 def _check_processes():
-    """一次查 Codex/Hermes 进程,返回在跑的集合(如 {'Codex','Hermes'})。"""
+    """一次检查 ChatGPT/Hermes；兼容仍带主窗口的旧版 Codex。"""
     try:
         out = subprocess.check_output(
             ["powershell", "-NoProfile", "-Command",
-             "@('Codex','Hermes') | ForEach-Object { if(Get-Process $_ -ErrorAction SilentlyContinue){$_} }"],
+             "$chat = Get-Process ChatGPT -ErrorAction SilentlyContinue; "
+             "if(-not $chat){$chat = Get-Process Codex -ErrorAction SilentlyContinue | "
+             "Where-Object {$_.MainWindowHandle -ne 0}}; "
+             "if($chat){'ChatGPT'}; "
+             "if(Get-Process Hermes -ErrorAction SilentlyContinue){'Hermes'}"],
             text=True, timeout=3, creationflags=CREATE_NO_WINDOW)
         return set(l.strip() for l in out.splitlines() if l.strip())
     except Exception:
@@ -116,7 +108,7 @@ def _check_processes():
 
 
 STATE_RGB = {"green": (86, 230, 140), "red": (255, 95, 95), "off": (115, 124, 144)}
-AGENT_DEFS = [("claude", "Claude"), ("codex", "Codex"), ("hermes", "Hermes")]   # 顺序:上→下
+AGENT_DEFS = [("claude", "CC"), ("chatgpt", "ChatGPT"), ("hermes", "Hermes")]   # 顺序:上→下
 
 # 右键菜单文案(中/英)
 I18N = {
@@ -204,16 +196,16 @@ class Monitor(QWidget):
         now = time.time()
         timeout = self._green_timeout_min * 60 if self._green_timeout_min > 0 else 0
         procs = _check_processes()
-        # Claude(1h 活跃会话)
-        sessions = self._read_claude_sessions(now, timeout)
+        # CC:优先直接读 VS Code 插件会话 JSONL,并兼容旧 hooks 状态文件。
+        sessions = read_cc_sessions(STATE_DIR, now=now, green_timeout_sec=timeout)
         self._claude_sessions = sessions
         cstate = "green" if "green" in sessions else ("red" if "red" in sessions else "off")
         # 只把"在跑的"放进列表 → 灯动态增减
         active = []
         if sessions:
-            active.append(("claude", "Claude", cstate, sessions))
-        if "Codex" in procs:
-            active.append(("codex", "Codex", _codex_state_from_db(now), None))
+            active.append(("claude", "CC", cstate, sessions))
+        if "ChatGPT" in procs:
+            active.append(("chatgpt", "ChatGPT", _chatgpt_state_from_db(now), None))
         if "Hermes" in procs:
             active.append(("hermes", "Hermes", _state_from_db(), None))
         changed = (active != self._active_agents)
@@ -227,25 +219,6 @@ class Monitor(QWidget):
             self._fade_anim.setStartValue(0.0)
             self._fade_anim.start()
         self.update()
-
-    def _read_claude_sessions(self, now, timeout):
-        """1 小时内活跃的 Claude 会话状态列表。"""
-        sessions = []
-        for f in STATE_DIR.glob("claude_*.txt"):
-            try:
-                mt = f.stat().st_mtime
-                if now - mt > 86400:              # 超 1 天的旧文件,清掉
-                    f.unlink(missing_ok=True); continue
-                if now - mt > 3600:               # 超 1 小时不活跃,不计入
-                    continue
-                sv = f.read_text(encoding="utf-8").strip().lower()
-                if sv == "green" and timeout > 0 and (now - mt) > timeout:
-                    sv = "red"
-                if sv in ("green", "red"):   # 只算活跃(在跑/完成),off(已关闭)不计入分块
-                    sessions.append(sv)
-            except Exception:
-                pass
-        return sessions
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -283,7 +256,7 @@ class Monitor(QWidget):
                        Qt.AlignVCenter | Qt.AlignLeft, name)
 
     def _draw_claude_light(self, p, cx, cy, r, alpha=255):
-        """Claude 灯:按 1 小时活跃窗口数分块(2 窗口两半、3 窗口三份 120°…)。"""
+        """CC 灯:按 1 小时活跃窗口数分块(2 窗口两半、3 窗口三份 120°…)。"""
         sessions = self._claude_sessions
         if not sessions:
             p.setBrush(QColor(*STATE_RGB["off"], alpha)); p.setPen(Qt.NoPen)

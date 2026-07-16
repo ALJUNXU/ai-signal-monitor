@@ -8,29 +8,57 @@ stdin 收到 hook 事件 JSON(含 session_id、hook_event_name)。
 import sys
 import json
 import os
+import re
 from pathlib import Path
 
-try:
-    data = json.loads(sys.stdin.read() or "{}")
-except Exception:
-    data = {}
 
-sid = data.get("session_id") or "default"
-ev = data.get("hook_event_name", "")
+EVENT_STATES = {
+    "UserPromptSubmit": "green",
+    "Stop": "red",
+    "StopFailure": "red",
+    "SessionEnd": "off",
+}
 
-# 事件 → 状态
-table = {"UserPromptSubmit": "green", "Stop": "red", "StopFailure": "red", "SessionEnd": "off"}
-state = table.get(ev)
-if ev == "Notification":
-    # 只认 permission_prompt(VSCode 实际不触发,保留兼容)
-    state = "yellow" if data.get("matcher") == "permission_prompt" else None
 
-if state:
-    out = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AiSignal"
+def safe_session_id(value):
+    """Return a filename-safe, bounded session id."""
+    value = re.sub(r"[^A-Za-z0-9._-]", "_", str(value or "default"))
+    value = value.strip("._")[:128]
+    return value or "default"
+
+
+def write_event_state(data, state_dir=None):
+    """Persist only the sanitized session id and coarse traffic-light state."""
+    event = data.get("hook_event_name", "")
+    state = EVENT_STATES.get(event)
+    if event == "Notification":
+        # VSCode normally uses its own permission UI; retained for old clients.
+        state = "yellow" if data.get("matcher") == "permission_prompt" else None
+    if not state:
+        return None
+
+    session_id = safe_session_id(data.get("session_id"))
+    out = state_dir or (
+        Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AiSignal"
+    )
     try:
+        out = Path(out)
         out.mkdir(parents=True, exist_ok=True)
-        (out / f"claude_{sid}.txt").write_text(state, encoding="utf-8")
-    except Exception:
-        pass
+        target = out / f"claude_{session_id}.txt"
+        target.write_text(state, encoding="utf-8")
+        return target
+    except OSError:
+        return None
 
-sys.exit(0)
+
+def main():
+    try:
+        data = json.loads(sys.stdin.read() or "{}")
+    except (TypeError, ValueError):
+        data = {}
+    write_event_state(data)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

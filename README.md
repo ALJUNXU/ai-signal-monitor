@@ -1,16 +1,16 @@
-# AI Signal Monitor — Claude Code / Codex / Hermes 状态信号灯
+# AI Signal Monitor — CC / ChatGPT / Hermes 状态信号灯
 
-一个 Windows 桌面悬浮信号灯,实时监控 **Claude Code**、**Codex**、**Hermes Desktop** 的运行状态。看一眼就知道:哪个 AI 在跑、哪个答完了、哪个没开。
+一个 Windows 桌面悬浮信号灯,实时监控 **Claude Code(CC)**、**ChatGPT 桌面应用(原 Codex)**、**Hermes Desktop** 的运行状态。看一眼就知道:哪个 AI 在跑、哪个答完了、哪个没开。
 
-**动态灯**:只显示正在运行的 Agent(跑几个亮几个,面板高度跟着变)。**Claude 多窗口时,灯会自动分块**(2 窗口两半、3 窗口三份 120°…每块颜色对应该窗口状态)。贴屏幕右边缘吸附隐藏,鼠标移上去平滑展开。
+**动态灯**:只显示正在运行的 Agent(跑几个亮几个,面板高度跟着变)。**CC 多窗口时,灯会自动分块**(2 窗口两半、3 窗口三份 120°…每块颜色对应该窗口状态)。贴屏幕右边缘吸附隐藏,鼠标移上去平滑展开。
 
 > 📌 **适用版本(请先确认)**
-> - **Claude Code**:VSCode 的 **官方插件版**(扩展市场装,**不是** 终端 `claude` CLI 版)
-> - **Codex**:**Codex 桌面客户端**(Windows,有界面的那个)
+> - **CC**:VSCode 的 **Claude Code 官方插件版**(扩展市场安装,**不是**终端 `claude` CLI 版)
+> - **ChatGPT**:**ChatGPT 桌面应用**(原 Codex 桌面客户端)
 > - **Hermes**:**Hermes Desktop 桌面端**(Nous Research,[官网](https://hermes-ai.net/zh/desktop/))
 > - **系统**:Windows 10 / 11
 >
-> 其它版本(CLI 版 Claude/Codex、手机端等)未适配。
+> 其它版本(终端 CC、ChatGPT 手机端等)未适配。
 
 📖 **English**: [README_EN.md](./README_EN.md)
 
@@ -26,16 +26,16 @@
 
 | Agent | 怎么判断状态 |
 |---|---|
-| **Claude Code** | 用官方 [hooks](https://code.claude.com/docs/en/hooks)(`claude_hook.py`),按**会话**写 `claude_<session>.txt`。多个 Claude 窗口互不覆盖。 |
-| **Codex** | 直接读 `~/.codex/state_5.sqlite`(SQLite 只读),看 `threads` 表最后 `updated_at`:30 秒内有更新 → 🟢,否则 🔴。 |
+| **CC** | 直接读取官方 VSCode 插件生成的 `~/.claude/projects/**/*.jsonl`,只识别 `entrypoint=claude-vscode` 的会话。无需 hooks,多窗口互不覆盖。 |
+| **ChatGPT** | 识别 `ChatGPT` 进程(兼容旧版 Codex 窗口),读取 `~/.codex/state_5.sqlite`:30 秒内有更新 → 🟢,否则 🔴。 |
 | **Hermes** | 直接读 `state.db`(SQLite 只读),看最后一条消息的 `role` + `finish_reason`。 |
 
-> Codex / Hermes 都**不用配置**,程序自动找它们的 sqlite。为什么不用 HTTP API?本地都锁认证(匿名 401),sqlite 直读是唯一精确又即时的路子。
+> CC / ChatGPT / Hermes 都**不用配置**。程序会自动查找本地会话文件和 sqlite。
 
 ## 动态灯 + 分块
 
-- **动态**:只显示正在运行的 Agent(Claude 没跑就不显示 Claude 灯),面板高度随灯数变化。
-- **Claude 分块**:1 小时内活跃的 Claude 窗口有多个时,灯自动分块(2 窗口→两半、3→三份 120°…),每块颜色对应该窗口状态(绿/红)。只算活跃窗口(green/red),已关闭(off)不计。
+- **动态**:只显示正在运行的 Agent(CC 没跑就不显示 CC 灯),面板高度随灯数变化。
+- **CC 分块**:1 小时内活跃的 VSCode CC 会话有多个时,灯自动分块(2 窗口→两半、3→三份 120°…),每块颜色对应该窗口状态(绿/红)。只算活跃窗口(green/red),已关闭(off)不计。
 
 ## 用法
 
@@ -46,9 +46,9 @@ python signal_monitor.py
 
 或运行打包好的 `AiSignal.exe`(在 [Releases](../../releases),无需 Python)。
 
-### 配置 Claude Code hooks
+### CC hooks(可选兼容)
 
-**Codex / Hermes 不用配置**。只有 Claude Code 要(它没有可读的状态文件,靠 hooks):
+新版会直接读取 VSCode CC 的会话 JSONL,**不需要配置 hooks**。如果使用旧版 CC,仍可把下面配置合并进 `~/.claude/settings.json` 作为兼容通道:
 
 把下面合并进 `~/.claude/settings.json`(Windows: `C:\Users\<你>\.claude\settings.json`)的 `hooks` 字段(**`<项目路径>` 换成你 clone 的实际路径**,如 `D:/code/ai-signal`):
 
@@ -75,6 +75,14 @@ python signal_monitor.py
   - 退出
 
 设置存 `%LOCALAPPDATA%\AiSignal\config.json`,重启保留。
+
+## 隐私与安全
+
+- **完全本地运行**:程序不发起网络请求,不上传遥测、提示词、回复或会话文件。
+- CC 检测只使用最近 JSONL 记录中的状态元数据(`entrypoint`、`type`、`stop_reason`);消息正文不会被记录、复制或写入 AiSignal。
+- ChatGPT / Hermes 只读本地 SQLite 中用于判断忙闲的字段,不会修改数据库。
+- 可选 hook 只写入经过文件名安全处理的会话 ID 和 `green/red/off` 状态,不会保存提示词或回复。
+- `.gitignore` 默认排除 `.env`、密钥、数据库、日志和会话 JSONL,降低误提交隐私文件的风险。
 
 ## 技术
 

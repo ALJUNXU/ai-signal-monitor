@@ -1,16 +1,16 @@
-# AI Signal Monitor — Claude Code / Codex / Hermes Status Light
+# AI Signal Monitor — CC / ChatGPT / Hermes Status Light
 
-A Windows desktop floating signal light that monitors **Claude Code**, **Codex**, and **Hermes Desktop** in real time. Glance and know: which AI is running, which is done, which is off.
+A Windows desktop floating signal light that monitors **Claude Code (CC)**, the **ChatGPT desktop app (formerly Codex)**, and **Hermes Desktop** in real time.
 
-**Dynamic lights**: only shows the Agents currently running (one light per running app; panel height grows with the count). **When multiple Claude windows are active, its light auto-splits** (2 windows → halves, 3 → thirds at 120°… each slice colored by that window's status). Docks to the right edge and hides; smoothly expands on hover.
+**Dynamic lights**: only shows the Agents currently running (one light per running app; panel height grows with the count). **When multiple CC windows are active, its light auto-splits** (2 windows → halves, 3 → thirds at 120°… each slice colored by that window's status). Docks to the right edge and hides; smoothly expands on hover.
 
 > 📌 **Supported versions**
-> - **Claude Code**: the **official VSCode extension** (from the marketplace — *not* the terminal `claude` CLI)
-> - **Codex**: the **Codex desktop client** (Windows, the one with a GUI)
+> - **CC**: the official **Claude Code VSCode extension** (not the terminal `claude` CLI)
+> - **ChatGPT**: the **ChatGPT desktop app** (formerly the Codex desktop client)
 > - **Hermes**: **Hermes Desktop** (Nous Research, [download](https://hermes-ai.net/zh/desktop/))
 > - **OS**: Windows 10 / 11
 >
-> Other versions (CLI Claude/Codex, mobile, etc.) are not supported.
+> Other versions (terminal CC, mobile ChatGPT, etc.) are not supported.
 
 📖 **中文**: [README.md](./README.md)
 
@@ -26,16 +26,16 @@ A Windows desktop floating signal light that monitors **Claude Code**, **Codex**
 
 | Agent | How status is detected |
 |---|---|
-| **Claude Code** | Official [hooks](https://code.claude.com/docs/en/hooks) via `claude_hook.py`, writing per-session `claude_<session>.txt`. Multiple Claude windows don't overwrite each other. |
-| **Codex** | Reads `~/.codex/state_5.sqlite` (read-only SQLite), checks the last `updated_at` of the `threads` table: updated within 30s → 🟢, else 🔴. |
+| **CC** | Reads the official VSCode extension's `~/.claude/projects/**/*.jsonl` files and only accepts `entrypoint=claude-vscode` sessions. No hooks required. |
+| **ChatGPT** | Detects the `ChatGPT` process (with legacy Codex-window compatibility) and reads `~/.codex/state_5.sqlite`: updated within 30s → 🟢, else 🔴. |
 | **Hermes** | Reads `state.db` (read-only SQLite), checks the last message's `role` + `finish_reason`. |
 
-> Codex/Hermes need **no configuration** — the app finds their sqlite automatically. Why not the HTTP API? It's auth-locked locally (anonymous → 401); reading the sqlite directly is the only accurate, real-time path.
+> CC, ChatGPT, and Hermes need **no configuration**. The monitor discovers their local session files and sqlite databases automatically.
 
 ## Dynamic lights + splitting
 
-- **Dynamic**: only shows Agents that are running (no Claude light if Claude isn't running); panel height adjusts to the number of lights.
-- **Claude splitting**: when multiple Claude windows are active within the last hour, its light auto-splits (2 windows → halves, 3 → thirds at 120°…), each slice colored by that window's status (green/red). Only active windows (green/red) count; closed ones (off) don't.
+- **Dynamic**: only shows Agents that are running (no CC light if CC isn't running); panel height adjusts to the number of lights.
+- **CC splitting**: when multiple VSCode CC sessions are active within the last hour, its light auto-splits (2 windows → halves, 3 → thirds at 120°…), each slice colored by that session's status (green/red).
 
 ## Usage
 
@@ -46,9 +46,9 @@ python signal_monitor.py
 
 Or run the prebuilt `AiSignal.exe` (from [Releases](../../releases), no Python needed).
 
-### Configure Claude Code hooks
+### CC hooks (optional compatibility)
 
-**Codex / Hermes need no config.** Only Claude Code does (it has no readable state file, so we use hooks):
+Current releases read VSCode CC's JSONL sessions directly, so **hooks are not required**. For older CC releases, the following can still be merged into `~/.claude/settings.json` as a compatibility channel:
 
 Merge this into the `hooks` field of `~/.claude/settings.json` (Windows: `C:\Users\<you>\.claude\settings.json`). **Replace `<project-path>` with your actual clone path** (e.g. `D:/code/ai-signal`):
 
@@ -75,6 +75,14 @@ Merge this into the `hooks` field of `~/.claude/settings.json` (Windows: `C:\Use
   - Exit
 
 Settings persist in `%LOCALAPPDATA%\AiSignal\config.json`.
+
+## Privacy & Security
+
+- **Fully local**: the monitor makes no network requests and uploads no telemetry, prompts, responses, or session files.
+- CC detection only uses status metadata (`entrypoint`, `type`, and `stop_reason`) from recent JSONL records; message content is never logged, copied, or persisted by AiSignal.
+- ChatGPT and Hermes databases are read-only, and only fields needed to infer busy/idle state are used.
+- The optional hook writes only a filename-safe session id and a `green/red/off` state; it never stores prompts or responses.
+- `.gitignore` excludes `.env` files, keys, databases, logs, and session JSONL by default to reduce accidental disclosure.
 
 ## Tech
 
